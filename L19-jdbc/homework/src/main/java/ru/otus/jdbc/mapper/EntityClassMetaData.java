@@ -19,4 +19,10 @@ public interface EntityClassMetaData<T> {
     List<Field> getAllFields();
 
     List<Field> getFieldsWithoutId();
+
+    Object extractFieldIdValue(T instance);
+
+    List<Object> extractFieldValuesWithoutId(T instance);
+
+    Class<T> getEntityClass();
 }
