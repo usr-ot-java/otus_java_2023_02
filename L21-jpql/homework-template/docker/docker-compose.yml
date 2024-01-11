@@ -1,0 +1,17 @@
+version: '3.5'
+
+services:
+  postgres:
+    container_name: postgres_container
+    image: postgres:12
+    command: ["postgres", "-c", "log_statement=all"]
+    environment:
+      POSTGRES_USER: "usr"
+      POSTGRES_PASSWORD: "pwd"
+      PGDATA: /data/postgres
+      POSTGRES_DB: demoDB
+    volumes:
+      - ./postgres:/data/postgres
+    ports:
+      - "5430:5432"
+    restart: unless-stopped
