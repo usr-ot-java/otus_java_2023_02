@@ -1,10 +1,13 @@
 package ru.otus.appcontainer;
 
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import ru.otus.appcontainer.api.AppComponent;
 import ru.otus.appcontainer.api.AppComponentsContainer;
 import ru.otus.appcontainer.api.AppComponentsContainerConfig;
 import ru.otus.appcontainer.exception.IllegalComponentDefinitionException;
+import ru.otus.appcontainer.utils.ClassLoaderUtils;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -18,16 +21,42 @@ public class AppComponentsContainerImpl implements AppComponentsContainer {
     private final Map<String, Object> appComponentsByName = new HashMap<>();
 
     public AppComponentsContainerImpl(Class<?> initialConfigClass) {
-        processConfig(initialConfigClass);
+        processConfig(List.of(initialConfigClass));
     }
 
-    private void processConfig(Class<?> configClass) {
-        checkConfigClass(configClass);
-        List<Method> componentMethods = Arrays.stream(configClass.getMethods())
-                .filter(m -> m.isAnnotationPresent(AppComponent.class))
-                .collect(Collectors.toList());
+    public AppComponentsContainerImpl(Class<?>... initialConfigClasses) {
+        processConfig(Arrays.stream(initialConfigClasses).toList());
+    }
+
+    public AppComponentsContainerImpl(String packageName) {
+        List<Class<?>> configClasses = findAllConfigClasses(packageName);
+        processConfig(configClasses);
+    }
+
+    private void processConfig(List<Class<?>> configClasses) {
+        configClasses.forEach(this::checkConfigClass);
+        Map<Method, Class<?>> componentMethods = configClasses.stream()
+                .flatMap(cls ->
+                        Arrays.stream(cls.getMethods())
+                                .filter(m -> m.isAnnotationPresent(AppComponent.class))
+                                .map(m -> new ImmutablePair<Method, Class<?>>(m, cls))
+                )
+                .collect(Collectors.toMap(ImmutablePair::getLeft, ImmutablePair::getRight));
         validateComponentMethods(componentMethods);
-        instantiateComponents(configClass, componentMethods);
+
+        List<Class<?>> configs = new ArrayList<>(configClasses);
+        configs.sort((c1, c2) -> {
+            AppComponentsContainerConfig a1 = c1.getAnnotation(AppComponentsContainerConfig.class);
+            AppComponentsContainerConfig a2 = c2.getAnnotation(AppComponentsContainerConfig.class);
+            return Integer.compare(a1.order(), a2.order());
+        });
+        configs.forEach(cls ->
+                instantiateComponents(cls,
+                        Arrays.stream(cls.getMethods())
+                                .filter(m -> m.isAnnotationPresent(AppComponent.class))
+                                .collect(Collectors.toList())
+                )
+        );
     }
 
     private void checkConfigClass(Class<?> configClass) {
@@ -36,10 +65,10 @@ public class AppComponentsContainerImpl implements AppComponentsContainer {
         }
     }
 
-    private void validateComponentMethods(List<Method> componentMethods) {
+    private void validateComponentMethods(Map<Method, Class<?>> componentMethods) {
         HashSet<String> componentNames = new HashSet<>();
         HashMap<Class<?>, String> componentTypes = new HashMap<>();
-        for (Method method : componentMethods) {
+        for (Method method : componentMethods.keySet()) {
             AppComponent annotation = method.getAnnotation(AppComponent.class);
             String componentName = annotation.name();
             if (!Modifier.isPublic(method.getModifiers())) {
@@ -69,23 +98,10 @@ public class AppComponentsContainerImpl implements AppComponentsContainer {
             componentNames.add(componentName);
             componentTypes.put(componentType, componentName);
         }
-
     }
 
     private void instantiateComponents(Class<?> configClass, List<Method> componentMethods) {
-        Object configInstance;
-        try {
-            Constructor<?> constructor = configClass.getDeclaredConstructor();
-            configInstance = constructor.newInstance();
-        } catch (NoSuchMethodException e) {
-            throw new IllegalArgumentException(
-                    String.format("Configuration class `%s` must have no args constructor", configClass.getName()), e
-            );
-        } catch (InvocationTargetException | InstantiationException | IllegalAccessException e) {
-            throw new RuntimeException(
-                    String.format("Failed to instantiate configuration class %s", configClass.getName()), e
-            );
-        }
+        Object configInstance = instantiateConfigClass(configClass);
 
         // Sorting the component methods in initialization order
         componentMethods.sort((m1, m2) -> {
@@ -102,6 +118,21 @@ public class AppComponentsContainerImpl implements AppComponentsContainer {
             appComponentsByName.put(componentName, componentInstance);
             appComponentsByClass.put(method.getReturnType(), componentInstance);
             appComponentsByClass.put(componentInstance.getClass(), componentInstance);
+        }
+    }
+
+    private static Object instantiateConfigClass(Class<?> configClass) {
+        try {
+            Constructor<?> constructor = configClass.getDeclaredConstructor();
+            return constructor.newInstance();
+        } catch (NoSuchMethodException e) {
+            throw new IllegalArgumentException(
+                    String.format("Configuration class `%s` must have no args constructor", configClass.getName()), e
+            );
+        } catch (InvocationTargetException | InstantiationException | IllegalAccessException e) {
+            throw new RuntimeException(
+                    String.format("Failed to instantiate configuration class %s", configClass.getName()), e
+            );
         }
     }
 
@@ -131,6 +162,16 @@ public class AppComponentsContainerImpl implements AppComponentsContainer {
             return componentMethod.invoke(configInstance, args);
         } catch (InvocationTargetException | IllegalAccessException e) {
             throw new RuntimeException(String.format("Failed to instantiate component `%s`", componentName), e);
+        }
+    }
+
+    private List<Class<?>> findAllConfigClasses(String packageName) {
+        try {
+            return ClassLoaderUtils.findAllClasses(packageName)
+                    .stream().filter(cls -> cls.isAnnotationPresent(AppComponentsContainerConfig.class))
+                    .collect(Collectors.toList());
+        } catch (IOException e) {
+            throw new RuntimeException(String.format("Failed to load classes for package %s", packageName), e);
         }
     }
 
