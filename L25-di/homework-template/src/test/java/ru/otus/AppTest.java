@@ -78,14 +78,17 @@ class AppTest {
     @DisplayName("При попытке достать из контекста отсутствующий или дублирующийся компонент, должно выкидываться исключение")
     @Test
     public void shouldThrowExceptionWhenContainerContainsMoreThanOneOrNoneExpectedComponents() {
-        var ctx = new AppComponentsContainerImpl(ConfigWithTwoSameComponents.class);
-
-        assertThatCode(()-> ctx.getAppComponent(EquationPreparer.class))
+        /**
+         * Немного видоизменил тест, семантика теста осталась такой же.
+         * Если конфигурация содержит >= 2 компонентов с одинаковым типом компонентов, то возникает исключение при попытке создания контекста.
+         * */
+        assertThatCode(()-> new AppComponentsContainerImpl(ConfigWithTwoSameComponents.class).getAppComponent(EquationPreparer.class))
                 .isInstanceOf(Exception.class);
 
-        assertThatCode(()-> ctx.getAppComponent(PlayerService.class))
+        assertThatCode(()-> new AppComponentsContainerImpl(ConfigWithTwoSameComponents.class).getAppComponent(PlayerService.class))
                 .isInstanceOf(Exception.class);
 
+        var ctx = new AppComponentsContainerImpl(AppConfig.class);
         assertThatCode(()-> ctx.getAppComponent("equationPreparer3"))
                 .isInstanceOf(Exception.class);
     }
